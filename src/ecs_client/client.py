@@ -21,9 +21,14 @@ from ecs_client.models import (
     ReplicationState,
     Temperature,
 )
-from ecs_client.request import ECSRequest
-from ecs_client.request import Authenticator as S3Client
-from ecs_client.request import ECSClient as EMCClient
+from ecs_client.request import (
+    ECSRequest,                
+    Authenticator as S3Client,
+    ECSClient as EMCClient,
+    NamespaceRequest,
+    BucketRequest,
+    LifecycleRequest
+)
 
 
 class ECSClient:
@@ -130,19 +135,128 @@ class ECSClient:
 
     #####new lines ################
 
-    #def get_namespaces(self) :
-    #    logger.info("Getting namespaces...")
-    #    namespace_manager = NamespaceManager(self.emc_client)
-    #    namespaces = namespace_manager.get_all()
-    #    logger.info("namespaces collected.")
-    #    return namespaces
+    def list_namespaces(self) -> List[Dict]:
+        logger.info("Listing namespaces...")
+        resp = NamespaceRequest(self.client_config.config_emc).list()
+        resp.raise_for_status()
+        return resp.json()
 
-    def get_namespace_by_name(self, name: str):
-        logger.info("Getting namespace...")
-        namespace_manager = NamespaceManager(self.emc_client)
-        namespace = namespace_manager.get(name)
-        logger.info("namespace collected.")
-        return namespace
+    def get_namespace(self, name: str) -> Dict:
+        logger.info(f"Getting namespace {name}...")
+        resp = NamespaceRequest(self.client_config.config_emc).get(name)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_namespace(
+        self,
+        name: str,
+        default_replication_group: Optional[str] = None,
+        namespace_admins: Optional[List[str]] = None,
+        quota: Optional[Dict[str, int]] = None,
+        encryption: bool = False
+    ) -> Dict:
+        logger.info(f"Creating namespace {name}...")
+        resp = NamespaceRequest(self.client_config.config_emc).create(
+            namespace=name,
+            default_replication_group=default_replication_group,
+            namespace_admins=namespace_admins,
+            quota=quota,
+            encryption=encryption
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_namespace(self, name: str, **kwargs) -> Dict:
+        logger.info(f"Updating namespace {name} with {kwargs}...")
+        resp = NamespaceRequest(self.client_config.config_emc).update(name, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_namespace(self, name: str) -> bool:
+        logger.info(f"Deleting namespace {name}...")
+        resp = NamespaceRequest(self.client_config.config_emc).delete(name)
+        resp.raise_for_status()
+        return resp.status_code == 204
+
+    ###### Méthodes REST pour buckets ######
+
+    def list_buckets(self, namespace: Optional[str] = None) -> List[Dict]:
+        logger.info("Listing buckets...")
+        resp = BucketRequest(self.client_config.config_emc).list(namespace)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_bucket(self, bucket: str) -> Dict:
+        logger.info(f"Getting bucket {bucket}...")
+        resp = BucketRequest(self.client_config.config_emc).get(bucket)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_bucket(
+        self,
+        bucket: str,
+        namespace: Optional[str] = None,
+        file_system_enabled: bool = False,
+        quota: Optional[int] = None,
+        retention: Optional[int] = None
+    ) -> Dict:
+        logger.info(f"Creating bucket {bucket}...")
+        resp = BucketRequest(self.client_config.config_emc).create(
+            bucket=bucket,
+            namespace=namespace,
+            file_system_enabled=file_system_enabled,
+            quota=quota,
+            retention=retention
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_bucket(self, bucket: str, **kwargs) -> Dict:
+        logger.info(f"Updating bucket {bucket} with {kwargs}...")
+        resp = BucketRequest(self.client_config.config_emc).update(bucket, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_bucket(self, bucket: str) -> bool:
+        logger.info(f"Deleting bucket {bucket}...")
+        resp = BucketRequest(self.client_config.config_emc).delete(bucket)
+        resp.raise_for_status()
+        return resp.status_code == 204
+
+    def set_bucket_metadata(self, bucket: str, metadata: Dict[str, str]) -> Dict:
+        logger.info(f"Setting metadata on bucket {bucket}...")
+        resp = BucketRequest(self.client_config.config_emc).set_metadata(bucket, metadata)
+        resp.raise_for_status()
+        return resp.json()
+
+    ###### Méthodes S3 pour les lifecycles ######
+
+    def list_lifecycle_rules(self, bucket: str) -> List[str]:
+        logger.info(f"Listing lifecycle rules for bucket {bucket}...")
+        s3_cfg = self.client_config.configs_s3[0]
+        return LifecycleRequest(s3_cfg).list_rules(bucket)
+
+    def create_lifecycle_rule_with_date(
+        self,
+        bucket: str,
+        rule_id: str,
+        prefix: str,
+        date_str: str
+    ) -> None:
+        logger.info(f"Creating lifecycle rule {rule_id} on {bucket} expiring at {date_str}...")
+        s3_cfg = self.client_config.configs_s3[0]
+        LifecycleRequest(s3_cfg).create_rule_with_date(bucket, rule_id, prefix, date_str)
+
+    def create_lifecycle_rule_with_days(
+        self,
+        bucket: str,
+        rule_id: str,
+        prefix: str,
+        days: int
+    ) -> None:
+        logger.info(f"Creating lifecycle rule {rule_id} on {bucket} expiring after {days} days...")
+        s3_cfg = self.client_config.configs_s3[0]
+        LifecycleRequest(s3_cfg).create_rule_with_days(bucket, rule_id, prefix, days)
 
 
     @staticmethod
