@@ -1,0 +1,54 @@
+ecs:
+  ecs-01:
+    username: username-01
+    host_name: ecs-01.gva.com
+  ecs-02:
+    username: username-02
+    host_name: ecs-02.gva.com
+  ecs-03:
+    username: username-03
+    host_name: ecs-03.gva.com
+
+s3:
+  GVA-Arch-MSS:
+    endpoint: "https://:9021"
+    access_key: ""
+    namespace: ""
+    region: "us-east-1"
+    prefix_list:
+      - "04-2015"
+      - "05-2015"
+      - "06-2015"
+      - "07-2015"
+      - "08-2015"
+
+  GVA-Arch-PGL:
+    endpoint: "https://:9021"
+    access_key: ""
+    secret_key: ""
+    namespace: ""
+    region: "us-east-1"
+    prefix_list:
+      - "04-2015"
+      - "05-2015"
+      - "06-2015"
+      - "07-2015"
+      - "08-2015"
+      - "09-2015"
+      - "10-2015"
+
+  GVA-Arch-ORA:
+    endpoint: "https://:9021"
+    access_key: ""
+    secret_key: ""
+    namespace: ""
+    region: "us-east-1"
+    prefix_list:
+      - "04-2015"
+
+ecs-emc:
+  endpoint: https://:4443
+  username: root
+
+ecs_client:
+  verbose: 0
