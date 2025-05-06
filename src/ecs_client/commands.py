@@ -1,8 +1,13 @@
+import sys, types, shlex
+
+pipes_module = types.ModuleType('pipes')
+pipes_module.quote = shlex.quote
+sys.modules['pipes'] = pipes_module
+
 from fire import Fire
 
 from ecs_client import ConfigECSClient, load_config, logger
 from ecs_client.client import ECSClient
-
 
 def run():
     logger.info("ECS client run command.")

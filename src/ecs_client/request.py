@@ -1,17 +1,17 @@
-from typing import Dict, Optional, Tuple
-from urllib.parse import urljoin, quote_plus, urlparse
+from typing import Dict, Optional, Tuple, List
+from urllib.parse import urljoin, quote_plus
 import paramiko
 import requests
 from paramiko import SSHClient
 from requests import Response
 import hashlib
-import hmac
 import base64
-import datetime
+import xml.etree.ElementTree as ET
 from requests.auth import HTTPBasicAuth
 
 from ecs_client import ConfigECS, ConfigS3, ConfigEMC, ConfigECSClient, logger
 from ecs_client.exceptions import ECSCLientBadCredential, ECSCLientRequestError
+
 
 ### ECS REQUEST SIMPLE SSH TUNNEL ###
 class ECSRequest:
@@ -39,6 +39,8 @@ class ECSRequest:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        self.ssh_client = None
+        self.token = None
 
     # SSH
     def login_ssh(self):
@@ -110,7 +112,7 @@ class ECSRequest:
         return response
 
     def _request(self, method: str, endpoint: str, **kwargs) -> Response:
-        if not self.token:
+        if not hasattr(self, 'token') or not self.token:
             self.login_api()
         uri: str = urljoin(self.api_mgt_url, endpoint)
 
@@ -132,7 +134,7 @@ class ECSRequest:
 
         if response.status_code == 401:
             self.login_api()
-            return self._request(method, uri, **kwargs)
+            return self._request(method, endpoint, **kwargs)
         if response.status_code >= 400:
             raise ECSCLientRequestError(response.text)
 
@@ -152,12 +154,14 @@ class ECSRequest:
         return self._request("DELETE", endpoint, **kwargs)
 
     def logout_api(self) -> Optional[Response]:
-        if not self.token:
-            return
+        if not hasattr(self, 'token') or not self.token:
+            return None
         response: Response = self.get("/logout")
         del self.base_headers["X-SDS-AUTH-TOKEN"]
         self.token = ""
         return response
+
+
 ### END ECS REQUEST SIMPLE SSH TUNNEL ###
 ### S3 AUTHENTICATION ###
 class S3Signer:
@@ -165,6 +169,7 @@ class S3Signer:
     def sign_request_v2(method, url, headers, access_key, secret_key, payload):
         # … implémentation existante …
         pass
+
 
 class Authenticator:
     def __init__(
@@ -185,12 +190,15 @@ class Authenticator:
             bucket: Optional[str] = None,
             object_key: Optional[str] = None,
             subresource: Optional[str] = None,
-            headers: Dict[str, str] = {},
+            headers: Dict[str, str] = None,
             payload: bytes = b'',
     ) -> Tuple[Dict[str, str], str]:
         """
         Sign the request for S3 operations. Retourne (signed_headers, url).
         """
+        if headers is None:
+            headers = {}
+            
         url = self.endpoint
         if bucket:
             url += f"/{bucket}"
@@ -206,6 +214,8 @@ class Authenticator:
             return signed_headers, url
         else:
             raise NotImplementedError("Only v2 authentication is supported at this time.")
+
+
 ### END S3 AUTHENTICATION ###
 
 ### EMC AUTHENTICATION ###
@@ -236,6 +246,8 @@ class ECSAuth:
 
     def delete(self, path: str, **kwargs) -> Response:
         return self.session.delete(self._url(path), **kwargs)
+
+
 ### END EMC AUTHENTICATION ###
 
 class ECSClient:
@@ -259,13 +271,14 @@ class ECSClient:
     def delete(self, path: str, **kwargs) -> Response:
         return self.session.delete(self._url(path), **kwargs)
 
+
 ### NOUVELLES CLASSES DE REQUÊTES REST ###
 
 class NamespaceRequest:
     """
     Gérez les namespaces via l'API Management ECS.
-    - List/Create: GET|POST /object/namespaces :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
-    - Get/Update/Delete: GET|PUT|DELETE /object/namespaces/namespace/{namespace} :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+    - List/Create: GET|POST /object/namespaces
+    - Get/Update/Delete: GET|PUT|DELETE /object/namespaces/namespace/{namespace}
     """
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
@@ -304,9 +317,9 @@ class NamespaceRequest:
 class BucketRequest:
     """
     Gérez les buckets via l'API Management ECS.
-    - List/Create: GET|POST /object/bucket :contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
-    - Get/Update/Delete: GET|PUT|DELETE /object/bucket/{bucketName} :contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
-    - Metadata: POST /object/bucket/{bucketName}/metadata :contentReference[oaicite:8]{index=8}:contentReference[oaicite:9]{index=9}
+    - List/Create: GET|POST /object/bucket
+    - Get/Update/Delete: GET|PUT|DELETE /object/bucket/{bucketName}
+    - Metadata: POST /object/bucket/{bucketName}/metadata
     """
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
@@ -349,35 +362,43 @@ class BucketRequest:
         return self.client.post(f"/object/bucket/{quote_plus(bucket)}/metadata", json=metadata)
 
 
-# Helpers pour Lifecycle XML
-NS_S3 = "http://s3.amazonaws.com/doc/2006-03-01/"
-
-def _build_lifecycle_config(rules: List[Element]) -> bytes:
-    root = Element('LifecycleConfiguration', xmlns=NS_S3)
+def _build_lifecycle_config(rules: List[ET.Element]) -> bytes:
+    """Helper function to build lifecycle configuration XML."""
+    root = ET.Element('LifecycleConfiguration')
     for rule in rules:
         root.append(rule)
-    xml_bytes = tostring(root, encoding='utf-8')
-    return b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml_bytes
+    return ET.tostring(root, encoding='utf-8')
 
-def build_rule_with_date(rule_id: str, prefix: str, date_str: str) -> Element:
-    r = Element('Rule')
-    SubElement(r, 'ID').text = rule_id
-    flt = SubElement(r, 'Filter')
-    SubElement(flt, 'Prefix').text = prefix
-    SubElement(r, 'Status').text = 'Enabled'
-    exp = SubElement(r, 'Expiration')
-    SubElement(exp, 'Date').text = date_str
-    return r
 
-def build_rule_with_days(rule_id: str, prefix: str, days: int) -> Element:
-    r = Element('Rule')
-    SubElement(r, 'ID').text = rule_id
-    flt = SubElement(r, 'Filter')
-    SubElement(flt, 'Prefix').text = prefix
-    SubElement(r, 'Status').text = 'Enabled'
-    exp = SubElement(r, 'Expiration')
-    SubElement(exp, 'Days').text = str(days)
-    return r
+def build_rule_with_date(rule_id: str, prefix: str, date_str: str) -> ET.Element:
+    """Build a lifecycle rule with expiration by date."""
+    rule = ET.Element('Rule')
+    id_elem = ET.SubElement(rule, 'ID')
+    id_elem.text = rule_id
+    prefix_elem = ET.SubElement(rule, 'Prefix')
+    prefix_elem.text = prefix
+    status = ET.SubElement(rule, 'Status')
+    status.text = 'Enabled'
+    expiration = ET.SubElement(rule, 'Expiration')
+    date_elem = ET.SubElement(expiration, 'Date')
+    date_elem.text = date_str
+    return rule
+
+
+def build_rule_with_days(rule_id: str, prefix: str, days: int) -> ET.Element:
+    """Build a lifecycle rule with expiration by days."""
+    rule = ET.Element('Rule')
+    id_elem = ET.SubElement(rule, 'ID')
+    id_elem.text = rule_id
+    prefix_elem = ET.SubElement(rule, 'Prefix')
+    prefix_elem.text = prefix
+    status = ET.SubElement(rule, 'Status')
+    status.text = 'Enabled'
+    expiration = ET.SubElement(rule, 'Expiration')
+    days_elem = ET.SubElement(expiration, 'Days')
+    days_elem.text = str(days)
+    return rule
+
 
 class LifecycleRequest:
     """
@@ -401,7 +422,7 @@ class LifecycleRequest:
         root = ET.fromstring(xml)
         return [rule.find('ID').text for rule in root.findall('Rule')]
 
-    def apply_rules(self, bucket: str, rules: List[Element]) -> Response:
+    def apply_rules(self, bucket: str, rules: List[ET.Element]) -> Response:
         xml_body = _build_lifecycle_config(rules)
         digest = hashlib.md5(xml_body).digest()
         md5_b64 = base64.b64encode(digest).decode('utf-8')
