@@ -22,7 +22,7 @@ from ecs_client.models import (
     Temperature,
 )
 from ecs_client.request import (
-    ECSRequest,                
+    ECSRequest,
     Authenticator as S3Client,
     ECSClient as EMCClient,
     NamespaceRequest,
@@ -145,6 +145,7 @@ class ECSClient:
         logger.info(f"Getting namespace {name}...")
         resp = NamespaceRequest(self.client_config.config_emc).get(name)
         resp.raise_for_status()
+        breakpoint()
         return resp.json()
 
     def create_namespace(
@@ -178,7 +179,6 @@ class ECSClient:
         resp.raise_for_status()
         return resp.status_code == 204
 
-    ###### Méthodes REST pour buckets ######
 
     def list_buckets(self, namespace: Optional[str] = None) -> List[Dict]:
         logger.info("Listing buckets...")
@@ -189,6 +189,7 @@ class ECSClient:
     def get_bucket(self, bucket: str) -> Dict:
         logger.info(f"Getting bucket {bucket}...")
         resp = BucketRequest(self.client_config.config_emc).get(bucket)
+        breakpoint()
         resp.raise_for_status()
         return resp.json()
 

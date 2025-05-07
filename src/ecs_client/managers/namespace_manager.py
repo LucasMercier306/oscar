@@ -5,13 +5,12 @@ class NamespaceManager:
     def __init__(self, client: ECSClient):
         self.client = client
 
-    #def get_all(self) -> Namespace:
-    #    resp = self.client.get(f"/namespace/")
-    #    resp.raise_for_status()
-    #    return Namespace(**resp.json())
+    def get_all(self) -> Namespace:
+        resp = self.client.get(f"/namespace/")
+        resp.raise_for_status()
+        return Namespace(**resp.json())
 
     def get(self, name: str) -> Namespace:
-        breakpoint()
         resp = self.client.get(f"/namespace/{name}")
         resp.raise_for_status()
         return Namespace(**resp.json())

@@ -2,6 +2,7 @@ from typing import Dict, Optional, Tuple, List
 from urllib.parse import urljoin, quote_plus
 import paramiko
 import requests
+from ecs_client.models import namespace
 from paramiko import SSHClient
 from requests import Response
 import hashlib
@@ -11,13 +12,15 @@ from requests.auth import HTTPBasicAuth
 
 from ecs_client import ConfigECS, ConfigS3, ConfigEMC, ConfigECSClient, logger
 from ecs_client.exceptions import ECSCLientBadCredential, ECSCLientRequestError
+import pickle
+from ecs_client.models.namespace import NamespaceData
 
 
 ### ECS REQUEST SIMPLE SSH TUNNEL ###
 class ECSRequest:
     def __init__(self, ecs_config: ConfigECS, jump_host: Optional["ECSRequest"] = None):
         self.name = ecs_config.name
-        self.cluster = ecs_config.name  # Assuming cluster name is the same as ECS name
+        self.cluster = ecs_config.name
 
         # SSH
         self.ssh_host_name = ecs_config.host_name
@@ -142,16 +145,16 @@ class ECSRequest:
         return response
 
     def get(self, endpoint: str, **kwargs) -> Response:
-        return self._request("GET", endpoint, **kwargs)
+        return self._request("GET", endpoint, **kwargs, verify=False)
 
     def post(self, endpoint: str, **kwargs) -> Response:
-        return self._request("POST", endpoint, **kwargs)
+        return self._request("POST", endpoint, **kwargs, verify=False)
 
     def put(self, endpoint: str, **kwargs) -> Response:
-        return self._request("PUT", endpoint, **kwargs)
+        return self._request("PUT", endpoint, **kwargs, verify=False)
 
     def delete(self, endpoint: str, **kwargs) -> Response:
-        return self._request("DELETE", endpoint, **kwargs)
+        return self._request("DELETE", endpoint, **kwargs, verify=False)
 
     def logout_api(self) -> Optional[Response]:
         if not hasattr(self, 'token') or not self.token:
@@ -168,6 +171,11 @@ class S3Signer:
     @staticmethod
     def sign_request_v2(method, url, headers, access_key, secret_key, payload):
         # … implémentation existante …
+
+
+
+
+
         pass
 
 
@@ -198,7 +206,7 @@ class Authenticator:
         """
         if headers is None:
             headers = {}
-            
+
         url = self.endpoint
         if bucket:
             url += f"/{bucket}"
@@ -211,6 +219,7 @@ class Authenticator:
             signed_headers = S3Signer.sign_request_v2(
                 method, url, headers, self.access_key, self.secret_key, payload
             )
+            breakpoint()
             return signed_headers, url
         else:
             raise NotImplementedError("Only v2 authentication is supported at this time.")
@@ -220,38 +229,56 @@ class Authenticator:
 
 ### EMC AUTHENTICATION ###
 class ECSAuth:
-    def __init__(self, emc_config: ConfigEMC):
+    def __init__(self, emc_config):
         self.base_url = emc_config.endpoint.rstrip('/')
         self.username = emc_config.username
         self.password = emc_config.password
         self.session = requests.Session()
+        self.cookie_file = 'cookiefile.pkl'
 
-    def login(self) -> requests.Session:
+    def login(self):
+        login_url = f"{self.base_url}/login?using-cookies=true"
         auth = HTTPBasicAuth(self.username, self.password)
-        resp = self.session.post(f"{self.base_url}/login", auth=auth)
+        resp = self.session.get(login_url, auth=auth, verify=False)
+        logger.info(resp.content)
         resp.raise_for_status()
+
+        # Save cookies to a file using pickle
+        with open(self.cookie_file, 'wb') as f:
+            pickle.dump(self.session.cookies, f)
+
         return self.session
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
-    def get(self, path: str, **kwargs) -> Response:
-        return self.session.get(self._url(path), **kwargs)
+    def get(self, path: str, **kwargs) -> requests.Response:
+        kwargs.setdefault('headers', {}).update(self._get_auth_headers())
+        return self.session.get(self._url(path), **kwargs, verify=False)
 
-    def post(self, path: str, json=None, **kwargs) -> Response:
-        return self.session.post(self._url(path), json=json, **kwargs)
+    def post(self, path: str, json=None, **kwargs) -> requests.Response:
+        kwargs.setdefault('headers', {}).update(self._get_auth_headers())
+        return self.session.post(self._url(path), json=json, **kwargs, verify=False)
 
-    def put(self, path: str, json=None, **kwargs) -> Response:
-        return self.session.put(self._url(path), json=json, **kwargs)
+    def put(self, path: str, json=None, **kwargs) -> requests.Response:
+        kwargs.setdefault('headers', {}).update(self._get_auth_headers())
+        return self.session.put(self._url(path), json=json, **kwargs, verify=False)
 
-    def delete(self, path: str, **kwargs) -> Response:
-        return self.session.delete(self._url(path), **kwargs)
+    def delete(self, path: str, **kwargs) -> requests.Response:
+        kwargs.setdefault('headers', {}).update(self._get_auth_headers())
+        return self.session.delete(self._url(path), **kwargs, verify=False)
 
+    def _get_auth_headers(self):
+        token = self.session.cookies.get('auth_token')
+        if not token:
+            logger.error("Authentication token not found in cookies.")
+            raise ValueError("Authentication token not found.")
+        return {"Authorization": token}
 
 ### END EMC AUTHENTICATION ###
 
 class ECSClient:
-    def __init__(self, emc_config: ConfigEMC):
+    def __init__(self, emc_config):
         auth = ECSAuth(emc_config)
         self.base_url = emc_config.endpoint.rstrip('/')
         self.session = auth.login()
@@ -259,20 +286,17 @@ class ECSClient:
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
-    def get(self, path: str, **kwargs) -> Response:
-        return self.session.get(self._url(path), **kwargs)
+    def get(self, path: str, **kwargs) -> requests.Response:
+        return self.session.get(self._url(path), **kwargs, verify=False)
 
-    def post(self, path: str, json=None, **kwargs) -> Response:
-        return self.session.post(self._url(path), json=json, **kwargs)
+    def post(self, path: str, json=None, **kwargs) -> requests.Response:
+        return self.session.post(self._url(path), json=json, **kwargs, verify=False)
 
-    def put(self, path: str, json=None, **kwargs) -> Response:
-        return self.session.put(self._url(path), json=json, **kwargs)
+    def put(self, path: str, json=None, **kwargs) -> requests.Response:
+        return self.session.put(self._url(path), json=json, **kwargs, verify=False)
 
-    def delete(self, path: str, **kwargs) -> Response:
-        return self.session.delete(self._url(path), **kwargs)
-
-
-### NOUVELLES CLASSES DE REQUÊTES REST ###
+    def delete(self, path: str, **kwargs) -> requests.Response:
+        return self.session.delete(self._url(path), **kwargs, verify=False)
 
 class NamespaceRequest:
     """
@@ -280,6 +304,7 @@ class NamespaceRequest:
     - List/Create: GET|POST /object/namespaces
     - Get/Update/Delete: GET|PUT|DELETE /object/namespaces/namespace/{namespace}
     """
+
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
 
@@ -287,15 +312,17 @@ class NamespaceRequest:
         return self.client.get("/object/namespaces")
 
     def get(self, namespace: str) -> Response:
-        return self.client.get(f"/object/namespaces/namespace/{quote_plus(namespace)}")
+        namespace_bytes =  self.client.get(f"/object/namespaces/namespace/{quote_plus(namespace)}")
+        namespace = NamespaceData.from_xml(namespace_bytes.content)
+        return namespace
 
     def create(
-        self,
-        namespace: str,
-        default_replication_group: Optional[str] = None,
-        namespace_admins: Optional[List[str]] = None,
-        quota: Optional[Dict[str, int]] = None,
-        encryption: bool = False
+            self,
+            namespace: str,
+            default_replication_group: Optional[str] = None,
+            namespace_admins: Optional[List[str]] = None,
+            quota: Optional[Dict[str, int]] = None,
+            encryption: bool = False
     ) -> Response:
         payload: Dict = {"namespace": namespace}
         if default_replication_group:
@@ -305,12 +332,16 @@ class NamespaceRequest:
         if quota:
             payload["quota"] = quota
         payload["encryption"] = encryption
+
+        breakpoint()
+
         return self.client.post("/object/namespaces", json=payload)
 
     def update(self, namespace: str, **kwargs) -> Response:
         return self.client.put(f"/object/namespaces/namespace/{quote_plus(namespace)}", json=kwargs)
 
     def delete(self, namespace: str) -> Response:
+        breakpoint()
         return self.client.delete(f"/object/namespaces/namespace/{quote_plus(namespace)}")
 
 
@@ -321,6 +352,7 @@ class BucketRequest:
     - Get/Update/Delete: GET|PUT|DELETE /object/bucket/{bucketName}
     - Metadata: POST /object/bucket/{bucketName}/metadata
     """
+
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
 
@@ -328,18 +360,21 @@ class BucketRequest:
         params = {}
         if namespace:
             params["namespace"] = namespace
+
+        breakpoint()
         return self.client.get("/object/bucket", params=params)
 
     def get(self, bucket: str) -> Response:
-        return self.client.get(f"/object/bucket/{quote_plus(bucket)}")
+        breakpoint()
+        return self.client.get(f"/object/bucket/{quote_plus(bucket)}?namespace=qecss01001-ns-s3-test")
 
     def create(
-        self,
-        bucket: str,
-        namespace: Optional[str] = None,
-        file_system_enabled: bool = False,
-        quota: Optional[int] = None,
-        retention: Optional[int] = None
+            self,
+            bucket: str,
+            namespace: Optional[str] = None,
+            file_system_enabled: bool = False,
+            quota: Optional[int] = None,
+            retention: Optional[int] = None
     ) -> Response:
         payload: Dict = {"bucket": bucket}
         if namespace:
@@ -350,12 +385,16 @@ class BucketRequest:
             payload["quota"] = quota
         if retention is not None:
             payload["retention"] = retention
+
+        breakpoint()
+
         return self.client.post("/object/bucket", json=payload)
 
     def update(self, bucket: str, **kwargs) -> Response:
         return self.client.put(f"/object/bucket/{quote_plus(bucket)}", json=kwargs)
 
     def delete(self, bucket: str) -> Response:
+        breakpoint()
         return self.client.delete(f"/object/bucket/{quote_plus(bucket)}")
 
     def set_metadata(self, bucket: str, metadata: Dict[str, str]) -> Response:
@@ -404,12 +443,14 @@ class LifecycleRequest:
     """
     Gestion des lifecycles S3 inspirée de ecs-s3-manager.
     """
+
     def __init__(self, s3_config: ConfigS3):
         self.auth = Authenticator(s3_config)
 
     def get_lifecycle(self, bucket: str) -> str:
         headers, url = self.auth.sign('GET', bucket=bucket, subresource='?lifecycle')
-        resp = requests.get(url, headers=headers)
+        breakpoint()
+        resp = requests.get(url, headers=headers, verify=False)
         if resp.status_code == 404:
             return ""
         resp.raise_for_status()
@@ -432,7 +473,7 @@ class LifecycleRequest:
             'Content-Length': str(len(xml_body))
         }
         signed, url = self.auth.sign('PUT', bucket=bucket, subresource='?lifecycle', headers=hdrs, payload=xml_body)
-        resp = requests.put(url, headers=signed, data=xml_body)
+        resp = requests.put(url, headers=signed, data=xml_body, Verify=False)
         resp.raise_for_status()
         return resp
 
