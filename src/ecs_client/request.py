@@ -16,6 +16,8 @@ from ecs_client import ConfigECS, ConfigS3, ConfigEMC, ConfigECSClient, logger
 from ecs_client.exceptions import ECSCLientBadCredential, ECSCLientRequestError
 import pickle
 from ecs_client.models.namespace import NamespaceData
+from xml.etree.ElementTree import Element, SubElement, tostring
+
 
 
 ### ECS REQUEST SIMPLE SSH TUNNEL ###
@@ -312,6 +314,8 @@ class ECSAuth:
 
 class ECSClient:
     def __init__(self, emc_config):
+
+        self.emc_config = emc_config
         auth = ECSAuth(emc_config)
         self.base_url = emc_config.endpoint.rstrip('/')
         self.session = auth.login()
@@ -395,6 +399,10 @@ class BucketRequest:
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
 
+        auth = ECSAuth(emc_config)
+        self.base_url = emc_config.endpoint.rstrip('/')
+        self.session = auth.login()
+
     def list(self, namespace: str) -> List[Dict[str, str]]:
         params = {"namespace": namespace}
         resp = self.client.get("/object/bucket", params=params)
@@ -420,16 +428,48 @@ class BucketRequest:
         namespace: str,
         file_system_enabled: bool = False,
         quota: Optional[int] = None,
-        retention: Optional[int] = None
+        retention: Optional[int] = None,
+        autocommit_period: Optional[int] = None,
+        default_data_services_vpool: Optional[str] = None
     ) -> Response:
-        payload: Dict = {"bucket": bucket, "namespace": namespace}
+        """
+        Création de bucket via l’API Management ECS (XML).
+        Si default_data_services_vpool n'est pas fourni, on le récupère depuis le namespace.
+        """
+        # 1) Récupérer le vpool si absent
+        if default_data_services_vpool is None:
+            ns_data = NamespaceRequest(self.client.emc_config).get(namespace)
+            default_data_services_vpool = getattr(
+                ns_data, "default_data_services_vpool", None
+            )
+
+        # 2) Construire le XML selon la spec REST
+        root = ET.Element("object_bucket_create")
+        ET.SubElement(root, "name").text = bucket
+        ET.SubElement(root, "namespace").text = namespace
+
         if file_system_enabled:
-            payload["fileSystemEnabled"] = True
+            # tag camelCase pour JSON compatibility
+            ET.SubElement(root, "fileSystemEnabled").text = "true"
+            # tag underscore pour TSO activation
+            ET.SubElement(root, "read_only_tso").text = "true"
+
         if quota is not None:
-            payload["quota"] = quota
+            ET.SubElement(root, "quota").text = str(quota)
         if retention is not None:
-            payload["retention"] = retention
-        return self.client.post("/object/bucket", json=payload)
+            ET.SubElement(root, "retention").text = str(retention)
+        if autocommit_period is not None:
+            ET.SubElement(root, "autocommit_period").text = str(autocommit_period)
+        if default_data_services_vpool:
+            ET.SubElement(
+                root, "defaultDataServicesVpool"
+            ).text = default_data_services_vpool
+
+        xml_body = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+        # 3) Envoi de la requête
+        headers = {"Content-Type": "application/xml"}
+        return self.client.post("/object/bucket", data=xml_body, headers=headers)
 
     def delete(self, bucket: str, namespace: str) -> Response:
         qp_bucket = quote_plus(bucket)

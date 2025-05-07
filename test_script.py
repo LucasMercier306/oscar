@@ -66,6 +66,7 @@ except RequestException as e:
     print("Erreur lors de la récupération du namespace :", e)
     exit(1)
 
+
 # --- 3. CREATE BUCKET ---
 test_bucket = f"test-bucket-{int(time.time())}"
 print(f"\n3. CREATE BUCKET '{test_bucket}'")
@@ -74,39 +75,17 @@ resp = bk_req.create(
     namespace=TEST_NAMESPACE,
     file_system_enabled=True,
     quota=5,
-    retention=10
+    retention=10,
+    autocommit_period=10  # ≤ 10s maximum
 )
 print("Status:", resp.status_code)
 print("Body:", resp.text)
-
-# Si échec 400, on réessaie en ajoutant defaultDataServicesVpool
-if resp.status_code >= 400:
-    print("→ Création initiale échouée, réessai avec defaultDataServicesVpool")
-    vpool = getattr(ns_data, "default_data_services_vpool", None)
-    payload = {
-        "bucket": test_bucket,
-        "namespace": TEST_NAMESPACE,
-        "fileSystemEnabled": True,
-        "quota": 5,
-        "retention": 10,
-    }
-    if vpool:
-        payload["defaultDataServicesVpool"] = vpool
-    resp2 = bk_req.client.post("/object/bucket", json=payload)
-    print("Retry Status:", resp2.status_code)
-    print("Retry Body:", resp2.text)
-    resp = resp2
-
 if resp.status_code >= 400:
     print("Échec de la création du bucket, abort.")
     exit(1)
 else:
-    print("Bucket créé :", resp.json())
+    print("Bucket créé avec succès.")
 
-# --- 4. LIST BUCKETS ---
-print("\n4. LIST BUCKETS")
-buckets = bk_req.list(TEST_NAMESPACE)
-pprint(buckets)
 
 # --- 5. GET BUCKET ---
 print(f"\n5. GET BUCKET '{test_bucket}'")
