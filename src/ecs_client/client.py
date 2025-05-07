@@ -190,11 +190,22 @@ class ECSClient:
         resp.raise_for_status()
         return resp.status_code == 204
 
-    def set_bucket_metadata(self, bucket: str, metadata: Dict[str, str]) -> Dict:
-        logger.info(f"Setting metadata on bucket {bucket}...")
-        resp = BucketRequest(self.client_config.config_emc).set_metadata(bucket, metadata)
+    def set_bucket_metadata(
+        self,
+        bucket: str,
+        head_type: str,
+        metadata: List[Dict[str, str]]
+    ) -> Dict:
+        logger.info(f"Setting secure metadata on bucket {bucket}...")
+        resp = BucketRequest(self.client_config.config_emc).set_metadata(
+            bucket=bucket,
+            namespace=self.client_config.config_emc.namespace,
+            head_type=head_type,
+            metadata=metadata
+        )
         resp.raise_for_status()
         return resp.json()
+
 
     # -------------- Gestion des lifecycles S3 --------------
     def list_lifecycle_rules(self, bucket: str) -> List[str]:

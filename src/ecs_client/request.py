@@ -18,6 +18,9 @@ import pickle
 from ecs_client.models.namespace import NamespaceData
 from xml.etree.ElementTree import Element, SubElement, tostring
 from ecs_client.models.bucket import BucketInfo
+from urllib.parse import urlparse
+import hashlib
+import base64
 
 
 
@@ -479,9 +482,40 @@ class BucketRequest:
         qp_ns = quote_plus(namespace)
         return self.client.delete(f"/object/bucket/{qp_bucket}?namespace={qp_ns}")
 
-    def set_metadata(self, bucket: str, metadata: Dict[str, str]) -> Response:
-        return self.client.post(
-            f"/object/bucket/{quote_plus(bucket)}/metadata", json=metadata
+    def set_metadata(
+        self,
+        bucket: str,
+        namespace: str,
+        head_type: str,
+        metadata: List[Dict[str, str]]
+    ) -> Response:
+        """
+        Déploie la secure bucket metadata (HDFS) sur un bucket via ECS Management REST API.
+        Exige un JSON de la forme :
+        {
+          "head_type": "...",
+          "metadata": [
+            {"name":"...", "value":"..."},
+            ...
+          ]
+        }
+        """
+        if not namespace:
+            raise ValueError("Le paramètre 'namespace' est obligatoire pour set_metadata")
+
+        qp_bucket = quote_plus(bucket)
+        # Construction du payload JSON
+        payload = {
+            "head_type": head_type,
+            "metadata": [
+                {"name": m["name"], "value": m["value"]} for m in metadata
+            ]
+        }
+        # Envoi en PUT sur /object/bucket/{bucket}/metadata?namespace=...
+        return self.client.put(
+            f"/object/bucket/{qp_bucket}/metadata",
+            params={"namespace": namespace},
+            json=payload
         )
 
 
@@ -526,45 +560,101 @@ def build_rule_with_days(rule_id: str, prefix: str, days: int) -> ET.Element:
 class LifecycleRequest:
     """
     Gestion des lifecycles S3 inspirée de ecs-s3-manager.
+    Utilise le path-style pour ECS Test Drive : get, create, delete lifecycles.
     """
 
     def __init__(self, s3_config: ConfigS3):
         self.auth = Authenticator(s3_config)
 
     def get_lifecycle(self, bucket: str) -> str:
-        headers, url = self.auth.sign('GET', bucket=bucket, subresource='?lifecycle')
-        breakpoint()
-        resp = requests.get(url, headers=headers, verify=False)
+        """
+        Récupère la configuration lifecycle en XML pour un bucket S3 ECS.
+        Path-style: https://<endpoint>/<bucket>?lifecycle
+        + Header x-emc-namespace
+        """
+        endpoint = self.auth.endpoint.rstrip('/')
+        url = f"{endpoint}/{bucket}?lifecycle"
+
+        # Header namespace + signature V2
+        headers = {"x-emc-namespace": self.auth.namespace}
+        signed_headers = S3Signer.sign_request_v2(
+            "GET", url, headers.copy(),
+            self.auth.access_key, self.auth.secret_key, b""
+        )
+
+        resp = requests.get(url, headers=signed_headers, verify=False)
         if resp.status_code == 404:
             return ""
         resp.raise_for_status()
         return resp.text
 
     def list_rules(self, bucket: str) -> List[str]:
+        """
+        Renvoie la liste des IDs de règles lifecycle.
+        """
         xml = self.get_lifecycle(bucket)
         if not xml:
             return []
         root = ET.fromstring(xml)
         return [rule.find('ID').text for rule in root.findall('Rule')]
 
-    def apply_rules(self, bucket: str, rules: List[ET.Element]) -> Response:
+    def apply_rules(self, bucket: str, rules: List[ET.Element]) -> requests.Response:
+        """
+        Applique un nouveau LifecycleConfiguration (remplace l’existant).
+        Path-style: https://<endpoint>/<bucket>?lifecycle
+        + Headers x-emc-namespace, Content-MD5, Content-Length, Content-Type.
+        """
         xml_body = _build_lifecycle_config(rules)
-        digest = hashlib.md5(xml_body).digest()
-        md5_b64 = base64.b64encode(digest).decode('utf-8')
-        hdrs = {
-            'Content-Type': 'application/xml',
-            'Content-MD5': md5_b64,
-            'Content-Length': str(len(xml_body))
+        md5_b64 = base64.b64encode(hashlib.md5(xml_body).digest()).decode("utf-8")
+
+        endpoint = self.auth.endpoint.rstrip('/')
+        url = f"{endpoint}/{bucket}?lifecycle"
+
+        headers = {
+            "x-emc-namespace": self.auth.namespace,
+            "Content-MD5":     md5_b64,
+            "Content-Type":    "application/xml",
+            "Content-Length":  str(len(xml_body)),
         }
-        signed, url = self.auth.sign('PUT', bucket=bucket, subresource='?lifecycle', headers=hdrs, payload=xml_body)
-        resp = requests.put(url, headers=signed, data=xml_body, Verify=False)
+
+        signed_headers = S3Signer.sign_request_v2(
+            "PUT", url, headers.copy(),
+            self.auth.access_key, self.auth.secret_key, xml_body
+        )
+
+        resp = requests.put(url, headers=signed_headers, data=xml_body, verify=False)
         resp.raise_for_status()
         return resp
 
-    def create_rule_with_date(self, bucket: str, rule_id: str, prefix: str, date_str: str) -> Response:
+    def create_rule_with_date(self, bucket: str, rule_id: str, prefix: str, date_str: str) -> requests.Response:
+        """
+        Crée et applique une règle expiration par date.
+        """
         rule = build_rule_with_date(rule_id, prefix, date_str)
         return self.apply_rules(bucket, [rule])
 
-    def create_rule_with_days(self, bucket: str, rule_id: str, prefix: str, days: int) -> Response:
+    def create_rule_with_days(self, bucket: str, rule_id: str, prefix: str, days: int) -> requests.Response:
+        """
+        Crée et applique une règle expiration par nombre de jours.
+        """
         rule = build_rule_with_days(rule_id, prefix, days)
         return self.apply_rules(bucket, [rule])
+
+    def delete_lifecycle(self, bucket: str) -> requests.Response:
+        """
+        Supprime la configuration lifecycle du bucket.
+        Path-style: https://<endpoint>/<bucket>?lifecycle
+        + Header x-emc-namespace.
+        """
+        endpoint = self.auth.endpoint.rstrip('/')
+        url = f"{endpoint}/{bucket}?lifecycle"
+
+        headers = {"x-emc-namespace": self.auth.namespace}
+        signed_headers = S3Signer.sign_request_v2(
+            "DELETE", url, headers.copy(),
+            self.auth.access_key, self.auth.secret_key, b""
+        )
+
+        resp = requests.delete(url, headers=signed_headers, verify=False)
+        resp.raise_for_status()
+        return resp

@@ -99,27 +99,34 @@ except Exception as e:
 
 # --- 6. SET METADATA ---
 print(f"\n6. SET METADATA on '{test_bucket}'")
-meta = {"owner": "test_user", "env": "ci"}
-resp = bk_req.set_metadata(test_bucket, meta)
+# Exemple de secure metadata pour HDFS
+secure_meta = [
+    {"name": "internal.kerberos.user.ambari-qa.name", "value": "ambari-qa@EXAMPLE_HDFS.EMC.COM"},
+    {"name": "internal.kerberos.user.ambari-qa.shortname", "value": "ambari-qa"}
+]
+# head_type doit être "hdfs"
+resp = bk_req.set_metadata(test_bucket, TEST_NAMESPACE, head_type="hdfs", metadata=secure_meta)
 print("Status:", resp.status_code)
 print("Body:", resp.text)
 if resp.status_code >= 400:
     print("Échec SET METADATA, abort.")
     exit(1)
 else:
-    pprint(resp.json())
+    print("Metadata sécurisée appliquée avec succès.")
 
-# --- 7. LIST LIFECYCLE RULES ---
-print(f"\n7. LIST LIFECYCLE RULES on '{test_bucket}'")
+
+# --- 9. LIST LIFECYCLE RULES ---
+print(f"\n9. LIST LIFECYCLE RULES on '{test_bucket}'")
 rules = lc_req.list_rules(test_bucket)
 pprint(rules)
+
 
 # --- 8. CREATE LIFECYCLE RULE ---
 print(f"\n8. CREATE LIFECYCLE RULE on '{test_bucket}'")
 rule_id = "expire-old"
 prefix = ""
 date_str = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 24*3600))
-resp = lc_req.create_rule_with_date(test_bucket, rule_id, prefix, date_str)
+lc_req.create_rule_with_date(test_bucket, rule_id, prefix, date_str)
 print("Status:", getattr(resp, "status_code", resp))
 if hasattr(resp, "text"):
     print("Body:", resp.text)
