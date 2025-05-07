@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from ecs_client.models.bucket import Bucket
 from typing import List
 
 from dataclasses import dataclass
@@ -54,7 +53,7 @@ class NamespaceData:
             default_data_services_vpool=root.find('default_data_services_vpool').text
         )
 
-@dataclass
-class Namespace:
-    name: str
-    buckets: List[Bucket]
+#@dataclass
+#class Namespace:
+#    name: str
+#    buckets: List[Bucket]

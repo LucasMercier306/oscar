@@ -17,6 +17,8 @@ from ecs_client.exceptions import ECSCLientBadCredential, ECSCLientRequestError
 import pickle
 from ecs_client.models.namespace import NamespaceData
 from xml.etree.ElementTree import Element, SubElement, tostring
+from ecs_client.models.bucket import BucketInfo
+
 
 
 
@@ -397,30 +399,31 @@ class BucketRequest:
     Gérez les buckets via l'API Management ECS.
     """
     def __init__(self, emc_config: ConfigEMC):
+        # Le client gère déjà l'authentification et stocke emc_config
         self.client = ECSClient(emc_config)
 
-        auth = ECSAuth(emc_config)
-        self.base_url = emc_config.endpoint.rstrip('/')
-        self.session = auth.login()
-
-    def list(self, namespace: str) -> List[Dict[str, str]]:
-        params = {"namespace": namespace}
-        resp = self.client.get("/object/bucket", params=params)
-        root = ET.fromstring(resp.text)
-        buckets = []
-        for b in root.findall(".//bucket"):
-            name = b.find("name").text
-            ns = b.find("namespace").text
-            buckets.append({"bucket": name, "namespace": ns})
-        buckets.sort(key=lambda x: x["bucket"])
-        return buckets
-
-    def get(self, bucket: str, namespace: str) -> Response:
+    def get(self, bucket: str, namespace: str) -> BucketInfo:
+        """
+        Récupère les propriétés d'un bucket et renvoie un BucketInfo.
+        
+        :param bucket: le nom du bucket
+        :param namespace: namespace auquel il appartient (obligatoire)
+        :raises ValueError si namespace vide
+        :raises HTTPError si le statut HTTP >= 400
+        """
         if not namespace:
             raise ValueError("Le paramètre 'namespace' est obligatoire pour get_bucket")
+
         qp_bucket = quote_plus(bucket)
-        qp_ns = quote_plus(namespace)
-        return self.client.get(f"/object/bucket/{qp_bucket}?namespace={qp_ns}")
+        # L'API Management REST s'attend à /info?namespace=<ns>
+        resp: Response = self.client.get(
+            f"/object/bucket/{qp_bucket}/info",
+            params={"namespace": namespace}
+        )
+        resp.raise_for_status()
+        # Transforme le XML brut en dataclass BucketInfo
+        return BucketInfo.from_xml(resp.text)
+
 
     def create(
         self,

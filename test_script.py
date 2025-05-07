@@ -86,17 +86,16 @@ if resp.status_code >= 400:
 else:
     print("Bucket créé avec succès.")
 
-
 # --- 5. GET BUCKET ---
 print(f"\n5. GET BUCKET '{test_bucket}'")
-resp = bk_req.get(test_bucket, TEST_NAMESPACE)
-print("Status:", resp.status_code)
-print("Body:", resp.text)
-if resp.status_code >= 400:
-    print("Échec GET bucket, abort.")
+try:
+    bucket_info = bk_req.get(test_bucket, TEST_NAMESPACE)
+    # bucket_info est une instance de BucketInfo, pas un Response
+    print("Bucket info :", bucket_info)
+except Exception as e:
+    print("Erreur GET bucket :", e)
     exit(1)
-else:
-    pprint(resp.json())
+
 
 # --- 6. SET METADATA ---
 print(f"\n6. SET METADATA on '{test_bucket}'")
