@@ -5,7 +5,9 @@ import requests
 from ecs_client.models import namespace
 from paramiko import SSHClient
 from requests import Response
+from datetime import datetime
 import hashlib
+import hmac
 import base64
 import xml.etree.ElementTree as ET
 from requests.auth import HTTPBasicAuth
@@ -169,21 +171,57 @@ class ECSRequest:
 ### S3 AUTHENTICATION ###
 class S3Signer:
     @staticmethod
-    def sign_request_v2(method, url, headers, access_key, secret_key, payload):
-        # … implémentation existante …
-
-
-
-
-
-        pass
-
+    def sign_request_v2(
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        access_key: str,
+        secret_key: str,
+        payload: bytes
+    ) -> Dict[str, str]:
+        """
+        AWS Signature V2 compatible pour ECS S3.
+        """
+        # 1. Date
+        if "Date" not in headers:
+            headers["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+        # 2. MD5 et Content-Type
+        content_md5 = headers.get("Content-MD5", "")
+        content_type = headers.get("Content-Type", "")
+        # 3. Canonicalized x-emc- / x-amz- headers
+        amz = {
+            k.lower(): v
+            for k, v in headers.items()
+            if k.lower().startswith("x-emc-") or k.lower().startswith("x-amz-")
+        }
+        canonical_amz = "".join(f"{k}:{amz[k]}\n" for k in sorted(amz))
+        # 4. Canonicalized resource
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        resource = parsed.path
+        if parsed.query:
+            resource += "?" + parsed.query
+        # 5. String to sign
+        string_to_sign = (
+            f"{method}\n"
+            f"{content_md5}\n"
+            f"{content_type}\n"
+            f"{headers['Date']}\n"
+            f"{canonical_amz}"
+            f"{resource}"
+        )
+        # 6. Calcul de la signature
+        sig = base64.b64encode(
+            hmac.new(secret_key.encode(), string_to_sign.encode(), hashlib.sha1).digest()
+        ).decode()
+        headers["Authorization"] = f"AWS {access_key}:{sig}"
+        return headers
 
 class Authenticator:
     def __init__(
-            self,
-            s3_config: ConfigS3,
-            method: str = 'v2'
+        self,
+        s3_config: ConfigS3,
+        method: str = 'v2'
     ):
         self.access_key = s3_config.access_key
         self.secret_key = s3_config.secret_key
@@ -193,20 +231,16 @@ class Authenticator:
         self.auth_method = method.lower()
 
     def sign(
-            self,
-            method: str,
-            bucket: Optional[str] = None,
-            object_key: Optional[str] = None,
-            subresource: Optional[str] = None,
-            headers: Dict[str, str] = None,
-            payload: bytes = b'',
+        self,
+        method: str,
+        bucket: Optional[str] = None,
+        object_key: Optional[str] = None,
+        subresource: Optional[str] = None,
+        headers: Dict[str, str] = None,
+        payload: bytes = b'',
     ) -> Tuple[Dict[str, str], str]:
-        """
-        Sign the request for S3 operations. Retourne (signed_headers, url).
-        """
         if headers is None:
             headers = {}
-
         url = self.endpoint
         if bucket:
             url += f"/{bucket}"
@@ -219,7 +253,6 @@ class Authenticator:
             signed_headers = S3Signer.sign_request_v2(
                 method, url, headers, self.access_key, self.secret_key, payload
             )
-            breakpoint()
             return signed_headers, url
         else:
             raise NotImplementedError("Only v2 authentication is supported at this time.")
@@ -297,108 +330,116 @@ class ECSClient:
 
     def delete(self, path: str, **kwargs) -> requests.Response:
         return self.session.delete(self._url(path), **kwargs, verify=False)
-
+    
 class NamespaceRequest:
     """
     Gérez les namespaces via l'API Management ECS.
-    - List/Create: GET|POST /object/namespaces
-    - Get/Update/Delete: GET|PUT|DELETE /object/namespaces/namespace/{namespace}
     """
-
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
 
-    def list(self) -> Response:
-        return self.client.get("/object/namespaces")
+    def list(self) -> List[Dict[str, str]]:
+        """
+        Liste les namespaces via l’API Management ECS,
+        retourne une liste de dicts {'id': ..., 'defaultReplicationGroup': ..., …}
+        """
+        resp = self.client.get("/object/namespaces")
+        resp.raise_for_status()
+        text = resp.text
+        root = ET.fromstring(text)
+        namespaces = []
+        for n in root.findall(".//namespace"):
+            entry = {}
+            for child in n:
+                entry[child.tag] = child.text
+            namespaces.append(entry)
+        return namespaces
 
     def get(self, namespace: str) -> Response:
-        namespace_bytes =  self.client.get(f"/object/namespaces/namespace/{quote_plus(namespace)}")
-        namespace = NamespaceData.from_xml(namespace_bytes.content)
-        return namespace
+        resp = self.client.get(f"/object/namespaces/namespace/{quote_plus(namespace)}")
+        return NamespaceData.from_xml(resp.content)
 
     def create(
-            self,
-            namespace: str,
-            default_replication_group: Optional[str] = None,
-            namespace_admins: Optional[List[str]] = None,
-            quota: Optional[Dict[str, int]] = None,
-            encryption: bool = False
+        self,
+        namespace: str,
+        default_replication_group: Optional[str] = None,
+        namespace_admins: Optional[List[str]] = None,
+        quota: Optional[Dict[str, int]] = None,
+        encryption: bool = False
     ) -> Response:
-        payload: Dict = {"namespace": namespace}
+        # Construction du XML pour la création
+        root = ET.Element("namespace")
+        ET.SubElement(root, "id").text = namespace
         if default_replication_group:
-            payload["defaultReplicationGroup"] = default_replication_group
+            ET.SubElement(root, "defaultReplicationGroup").text = default_replication_group
         if namespace_admins:
-            payload["namespaceAdmins"] = namespace_admins
+            admins = ET.SubElement(root, "namespaceAdmins")
+            for u in namespace_admins:
+                ET.SubElement(admins, "user").text = u
         if quota:
-            payload["quota"] = quota
-        payload["encryption"] = encryption
+            q = ET.SubElement(root, "quota")
+            for k, v in quota.items():
+                ET.SubElement(q, k).text = str(v)
+        ET.SubElement(root, "encryption").text = str(encryption).lower()
 
-        breakpoint()
+        xml_body = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        headers = {"Content-Type": "application/xml"}
+        return self.client.post("/object/namespaces", data=xml_body, headers=headers)
 
-        return self.client.post("/object/namespaces", json=payload)
-
-    def update(self, namespace: str, **kwargs) -> Response:
-        return self.client.put(f"/object/namespaces/namespace/{quote_plus(namespace)}", json=kwargs)
-
-    def delete(self, namespace: str) -> Response:
-        breakpoint()
-        return self.client.delete(f"/object/namespaces/namespace/{quote_plus(namespace)}")
 
 
 class BucketRequest:
     """
     Gérez les buckets via l'API Management ECS.
-    - List/Create: GET|POST /object/bucket
-    - Get/Update/Delete: GET|PUT|DELETE /object/bucket/{bucketName}
-    - Metadata: POST /object/bucket/{bucketName}/metadata
     """
-
     def __init__(self, emc_config: ConfigEMC):
         self.client = ECSClient(emc_config)
 
-    def list(self, namespace: Optional[str] = None) -> Response:
-        params = {}
-        if namespace:
-            params["namespace"] = namespace
+    def list(self, namespace: str) -> List[Dict[str, str]]:
+        params = {"namespace": namespace}
+        resp = self.client.get("/object/bucket", params=params)
+        root = ET.fromstring(resp.text)
+        buckets = []
+        for b in root.findall(".//bucket"):
+            name = b.find("name").text
+            ns = b.find("namespace").text
+            buckets.append({"bucket": name, "namespace": ns})
+        buckets.sort(key=lambda x: x["bucket"])
+        return buckets
 
-        breakpoint()
-        return self.client.get("/object/bucket", params=params)
-
-    def get(self, bucket: str) -> Response:
-        breakpoint()
-        return self.client.get(f"/object/bucket/{quote_plus(bucket)}?namespace=qecss01001-ns-s3-test")
+    def get(self, bucket: str, namespace: str) -> Response:
+        if not namespace:
+            raise ValueError("Le paramètre 'namespace' est obligatoire pour get_bucket")
+        qp_bucket = quote_plus(bucket)
+        qp_ns = quote_plus(namespace)
+        return self.client.get(f"/object/bucket/{qp_bucket}?namespace={qp_ns}")
 
     def create(
-            self,
-            bucket: str,
-            namespace: Optional[str] = None,
-            file_system_enabled: bool = False,
-            quota: Optional[int] = None,
-            retention: Optional[int] = None
+        self,
+        bucket: str,
+        namespace: str,
+        file_system_enabled: bool = False,
+        quota: Optional[int] = None,
+        retention: Optional[int] = None
     ) -> Response:
-        payload: Dict = {"bucket": bucket}
-        if namespace:
-            payload["namespace"] = namespace
+        payload: Dict = {"bucket": bucket, "namespace": namespace}
         if file_system_enabled:
             payload["fileSystemEnabled"] = True
         if quota is not None:
             payload["quota"] = quota
         if retention is not None:
             payload["retention"] = retention
-
-        breakpoint()
-
         return self.client.post("/object/bucket", json=payload)
 
-    def update(self, bucket: str, **kwargs) -> Response:
-        return self.client.put(f"/object/bucket/{quote_plus(bucket)}", json=kwargs)
-
-    def delete(self, bucket: str) -> Response:
-        breakpoint()
-        return self.client.delete(f"/object/bucket/{quote_plus(bucket)}")
+    def delete(self, bucket: str, namespace: str) -> Response:
+        qp_bucket = quote_plus(bucket)
+        qp_ns = quote_plus(namespace)
+        return self.client.delete(f"/object/bucket/{qp_bucket}?namespace={qp_ns}")
 
     def set_metadata(self, bucket: str, metadata: Dict[str, str]) -> Response:
-        return self.client.post(f"/object/bucket/{quote_plus(bucket)}/metadata", json=metadata)
+        return self.client.post(
+            f"/object/bucket/{quote_plus(bucket)}/metadata", json=metadata
+        )
 
 
 def _build_lifecycle_config(rules: List[ET.Element]) -> bytes:

@@ -9,3 +9,19 @@
 [2025-05-06 22:20:04,015] - [INFO] - ECS client - Listing namespaces...
 [2025-05-06 22:20:04,016] - [INFO] - ECS client - ECS logout...
 [2025-05-06 22:20:04,016] - [INFO] - ECS client - ECS logout...
+[2025-05-07 19:50:11,584] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 19:50:12,155] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:00:52,165] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:00:52,756] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:03:55,985] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:03:56,599] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:14:46,395] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:14:46,978] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:16:42,566] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:16:43,307] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:17:48,627] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:17:49,223] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:20:16,162] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:20:16,772] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:22:57,798] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'
+[2025-05-07 20:22:58,301] - [INFO] - ECS client - b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><loggedIn><user>133889366257974364-admin</user></loggedIn>'

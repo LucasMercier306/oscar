@@ -1,8 +1,10 @@
+# src/ecs_client/client.py
+
 from code import interact
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple
 
-from ecs_client import ConfigECSClient, logger
+from ecs_client import logger, ConfigECSClient
 from ecs_client.managers import (
     ClusterStateManager,
     NetworkInterfaceManager,
@@ -13,14 +15,6 @@ from ecs_client.managers import (
     NamespaceManager
 )
 from ecs_client.managers.base_manager import BaseManagerSSH
-from ecs_client.models import (
-    ClusterState,
-    NetworkInterface,
-    NodeInfo,
-    PowerSupply,
-    ReplicationState,
-    Temperature,
-)
 from ecs_client.request import (
     ECSRequest,
     Authenticator as S3Client,
@@ -32,12 +26,12 @@ from ecs_client.request import (
 
 
 class ECSClient:
-    client_config: ConfigECSClient
-    #ssh
-    ecs_requests: Dict[str, ECSRequest]
-    #emc
-    emc_client: EMCClient
-
+    """
+    Client principal pour interagir avec :
+    - Les clusters ECS via SSH/API (managers)
+    - L’API Management EMC pour namespaces et buckets
+    - Les opérations S3 (lifecycle, etc.)
+    """
     def __init__(
         self,
         client_config: ConfigECSClient,
@@ -48,6 +42,7 @@ class ECSClient:
         self.ecs_requests = ecs_requests
         self.emc_client = emc_client
 
+    # -------------- SSH / CLI interactif --------------
     def interactive(self):
         manager = BaseManagerSSH(self.ecs_requests)
         interact(local=locals())
@@ -56,15 +51,11 @@ class ECSClient:
         self, command: str, print_res: bool = True
     ) -> Dict[str, str | List[str]]:
         manager = BaseManagerSSH(self.ecs_requests)
-        results: Dict[str, str | List[str]] = manager.execute_command_on_hosts(
-            command
-        )
+        results = manager.execute_command_on_hosts(command)
         if print_res:
-            for ecs_name, result in results.items():
-                print(f"{ecs_name}:")
-                print(result)
-        else:
-            return manager.execute_command_on_hosts(command)
+            for name, res in results.items():
+                print(f"{name}:\n{res}")
+        return results
 
     def execute_command_on_host(
         self, host: str, command: str, print_res: bool = True
@@ -73,79 +64,61 @@ class ECSClient:
         stdout, stderr = manager.execute_command_on_host(host, command)
         if print_res:
             print(stdout)
-        else:
-            return stdout, stderr
+        return stdout, stderr
 
-    def get_cluster_state(
-        self, nodes: List[str]
-    ) -> Dict[str, ClusterState | List[str]]:
-        logger.info("Getting clusters state...")
-        cluster_state_manager = ClusterStateManager(self.ecs_requests)
-        clusters_state = cluster_state_manager.get_all(nodes)
-        logger.info("Clusters state collected.")
-        return clusters_state
+    # -------------- Managers ECS --------------
+    def get_cluster_state(self, nodes: List[str]) -> Dict[str, object]:
+        logger.info("Getting cluster state...")
+        mgr = ClusterStateManager(self.ecs_requests)
+        result = mgr.get_all(nodes)
+        logger.info("Cluster state collected.")
+        return result
 
-    def get_nodes_info(
-        self, nodes: List[str]
-    ) -> Dict[str, NodeInfo | List[str]]:
+    def get_nodes_info(self, nodes: List[str]) -> Dict[str, object]:
         logger.info("Getting nodes info...")
-        node_info_manager = NodeInfoManager(self.ecs_requests)
-        nodes_info = node_info_manager.get_all(nodes)
+        mgr = NodeInfoManager(self.ecs_requests)
+        result = mgr.get_all(nodes)
         logger.info("Nodes info collected.")
-        return nodes_info
+        return result
 
-    # def get_nodes_state(self) -> Dict[str, NodeState]:
-    #     logger.info("Getting nodes state...")
-    #     node_state_manager = NodeStateManager(self.ecs_requests)
-    #     nodes_state = node_state_manager.get_all()
-    #     logger.info("Nodes state collected.")
-    #     return nodes_state
-
-    def get_replications_state(
-        self,
-    ) -> Dict[str, ReplicationState | List[str]]:
+    def get_replications_state(self) -> Dict[str, object]:
         logger.info("Getting replications state...")
-        replication_state_manager = ReplicationStateManager(self.ecs_requests)
-        replications_state = replication_state_manager.get_all()
+        mgr = ReplicationStateManager(self.ecs_requests)
+        result = mgr.get_all()
         logger.info("Replications state collected.")
-        return replications_state
+        return result
 
-    def get_network_interfaces_by_cluster(
-        self,
-    ) -> Dict[str, List[NetworkInterface] | List[str]]:
+    def get_network_interfaces_by_cluster(self) -> Dict[str, object]:
         logger.info("Getting network interfaces...")
-        network_interface_manager = NetworkInterfaceManager(self.ecs_requests)
-        network_int = network_interface_manager.get_all_by_cluster()
+        mgr = NetworkInterfaceManager(self.ecs_requests)
+        result = mgr.get_all_by_cluster()
         logger.info("Network interfaces collected.")
-        return network_int
+        return result
 
-    def get_power_supplies(self) -> Dict[str, List[PowerSupply] | List[str]]:
+    def get_power_supplies(self) -> Dict[str, object]:
         logger.info("Getting power supplies...")
-        power_supply_manager = PowerSupplyManager(self.ecs_requests)
-        power_supplies = power_supply_manager.get_all()
+        mgr = PowerSupplyManager(self.ecs_requests)
+        result = mgr.get_all()
         logger.info("Power supplies collected.")
-        return power_supplies
+        return result
 
-    def get_temperatures(self) -> Dict[str, List[Temperature] | List[str]]:
+    def get_temperatures(self) -> Dict[str, object]:
         logger.info("Getting temperatures...")
-        temperature_manager = TemperatureManager(self.ecs_requests)
-        temperatures = temperature_manager.get_all()
+        mgr = TemperatureManager(self.ecs_requests)
+        result = mgr.get_all()
         logger.info("Temperatures collected.")
-        return temperatures
+        return result
 
-    #####new lines ################
-
-    def list_namespaces(self) -> List[Dict]:
+    # -------------- Namespaces (EMC Management API) --------------
+    def list_namespaces(self) -> List[Dict[str, str]]:
         logger.info("Listing namespaces...")
-        resp = NamespaceRequest(self.client_config.config_emc).list()
-        resp.raise_for_status()
-        return resp.json()
+        # Retourne directement la liste de dicts construite par NamespaceRequest.list
+        return NamespaceRequest(self.client_config.config_emc).list()
 
     def get_namespace(self, name: str) -> Dict:
         logger.info(f"Getting namespace {name}...")
         resp = NamespaceRequest(self.client_config.config_emc).get(name)
         resp.raise_for_status()
-        breakpoint()
         return resp.json()
 
     def create_namespace(
@@ -173,35 +146,28 @@ class ECSClient:
         resp.raise_for_status()
         return resp.json()
 
-    def delete_namespace(self, name: str) -> bool:
-        logger.info(f"Deleting namespace {name}...")
-        resp = NamespaceRequest(self.client_config.config_emc).delete(name)
-        resp.raise_for_status()
-        return resp.status_code == 204
+    # delete_namespace supprimée car non supportée
 
+    # -------------- Buckets (EMC Management API) --------------
+    def list_buckets(self, namespace: str) -> List[Dict]:
+        logger.info(f"Listing buckets in namespace {namespace}...")
+        return BucketRequest(self.client_config.config_emc).list(namespace)
 
-    def list_buckets(self, namespace: Optional[str] = None) -> List[Dict]:
-        logger.info("Listing buckets...")
-        resp = BucketRequest(self.client_config.config_emc).list(namespace)
-        resp.raise_for_status()
-        return resp.json()
-
-    def get_bucket(self, bucket: str) -> Dict:
-        logger.info(f"Getting bucket {bucket}...")
-        resp = BucketRequest(self.client_config.config_emc).get(bucket)
-        breakpoint()
+    def get_bucket(self, bucket: str, namespace: str) -> Dict:
+        logger.info(f"Getting bucket {bucket} in namespace {namespace}...")
+        resp = BucketRequest(self.client_config.config_emc).get(bucket, namespace)
         resp.raise_for_status()
         return resp.json()
 
     def create_bucket(
         self,
         bucket: str,
-        namespace: Optional[str] = None,
+        namespace: str,
         file_system_enabled: bool = False,
         quota: Optional[int] = None,
         retention: Optional[int] = None
     ) -> Dict:
-        logger.info(f"Creating bucket {bucket}...")
+        logger.info(f"Creating bucket {bucket} in namespace {namespace}...")
         resp = BucketRequest(self.client_config.config_emc).create(
             bucket=bucket,
             namespace=namespace,
@@ -218,9 +184,9 @@ class ECSClient:
         resp.raise_for_status()
         return resp.json()
 
-    def delete_bucket(self, bucket: str) -> bool:
-        logger.info(f"Deleting bucket {bucket}...")
-        resp = BucketRequest(self.client_config.config_emc).delete(bucket)
+    def delete_bucket(self, bucket: str, namespace: str) -> bool:
+        logger.info(f"Deleting bucket {bucket} in namespace {namespace}...")
+        resp = BucketRequest(self.client_config.config_emc).delete(bucket, namespace)
         resp.raise_for_status()
         return resp.status_code == 204
 
@@ -230,8 +196,7 @@ class ECSClient:
         resp.raise_for_status()
         return resp.json()
 
-    ###### Méthodes S3 pour les lifecycles ######
-
+    # -------------- Gestion des lifecycles S3 --------------
     def list_lifecycle_rules(self, bucket: str) -> List[str]:
         logger.info(f"Listing lifecycle rules for bucket {bucket}...")
         s3_cfg = self.client_config.configs_s3[0]
@@ -259,30 +224,25 @@ class ECSClient:
         s3_cfg = self.client_config.configs_s3[0]
         LifecycleRequest(s3_cfg).create_rule_with_days(bucket, rule_id, prefix, days)
 
-
+    # -------------- Contexte de session --------------
     @staticmethod
     @contextmanager
     def session(client_config: ConfigECSClient) -> "ECSClient":
-        ecs_client: Optional[ECSClient] = None
+        ecs_client = None
         try:
             ecs_requests: Dict[str, ECSRequest] = {}
-            emc_client: Optional[EMCClient] = None
-            for ecs_config in client_config.configs_ecs:
-                jump_host: Optional[ECSRequest] = None
-                if ecs_config.ssh_jump_host:
-                    jump_host = ecs_requests[ecs_config.ssh_jump_host]
-                ecs_requests[ecs_config.name] = ECSRequest(
-                    ecs_config, jump_host
-                )
+            for ecs_cfg in client_config.configs_ecs:
+                jump = ecs_requests.get(ecs_cfg.ssh_jump_host) if ecs_cfg.ssh_jump_host else None
+                ecs_requests[ecs_cfg.name] = ECSRequest(ecs_cfg, jump)
+            emc_client = EMCClient(client_config.config_emc)
             ecs_client = ECSClient(client_config, ecs_requests, emc_client)
             yield ecs_client
         finally:
             logger.info("ECS logout...")
-            if not ecs_client:
-                return
-            for name, ecs_request in ecs_client.ecs_requests.items():
-                try:
-                    ecs_request.logout_ssh()
-                    ecs_request.logout_api()
-                except Exception as e:
-                    logger.error(f"Error while ssh logout of host {name}: {e}")
+            if ecs_client:
+                for name, req in ecs_client.ecs_requests.items():
+                    try:
+                        req.logout_ssh()
+                        req.logout_api()
+                    except Exception as e:
+                        logger.error(f"Error during logout of {name}: {e}")
