@@ -560,7 +560,7 @@ def build_rule_with_days(rule_id: str, prefix: str, days: int) -> ET.Element:
 class LifecycleRequest:
     """
     Gestion des lifecycles S3 inspirée de ecs-s3-manager.
-    Utilise le path-style pour ECS Test Drive : get, create, delete lifecycles.
+    Passe en path-style pour ECS Test Drive.
     """
 
     def __init__(self, s3_config: ConfigS3):
@@ -569,17 +569,21 @@ class LifecycleRequest:
     def get_lifecycle(self, bucket: str) -> str:
         """
         Récupère la configuration lifecycle en XML pour un bucket S3 ECS.
-        Path-style: https://<endpoint>/<bucket>?lifecycle
-        + Header x-emc-namespace
+        Path-style URL: https://<endpoint>/<bucket>?lifecycle
+        + Header x-emc-namespace.
         """
         endpoint = self.auth.endpoint.rstrip('/')
         url = f"{endpoint}/{bucket}?lifecycle"
 
         # Header namespace + signature V2
-        headers = {"x-emc-namespace": self.auth.namespace}
+        hdrs = {"x-emc-namespace": self.auth.namespace}
         signed_headers = S3Signer.sign_request_v2(
-            "GET", url, headers.copy(),
-            self.auth.access_key, self.auth.secret_key, b""
+            "GET",
+            url,
+            hdrs.copy(),
+            self.auth.access_key,
+            self.auth.secret_key,
+            b""
         )
 
         resp = requests.get(url, headers=signed_headers, verify=False)
@@ -589,9 +593,6 @@ class LifecycleRequest:
         return resp.text
 
     def list_rules(self, bucket: str) -> List[str]:
-        """
-        Renvoie la liste des IDs de règles lifecycle.
-        """
         xml = self.get_lifecycle(bucket)
         if not xml:
             return []
@@ -601,8 +602,8 @@ class LifecycleRequest:
     def apply_rules(self, bucket: str, rules: List[ET.Element]) -> requests.Response:
         """
         Applique un nouveau LifecycleConfiguration (remplace l’existant).
-        Path-style: https://<endpoint>/<bucket>?lifecycle
-        + Headers x-emc-namespace, Content-MD5, Content-Length, Content-Type.
+        Path-style URL: https://<endpoint>/<bucket>?lifecycle
+        + Header x-emc-namespace, Content-MD5, Content-Length.
         """
         xml_body = _build_lifecycle_config(rules)
         md5_b64 = base64.b64encode(hashlib.md5(xml_body).digest()).decode("utf-8")
@@ -618,8 +619,12 @@ class LifecycleRequest:
         }
 
         signed_headers = S3Signer.sign_request_v2(
-            "PUT", url, headers.copy(),
-            self.auth.access_key, self.auth.secret_key, xml_body
+            "PUT",
+            url,
+            headers.copy(),
+            self.auth.access_key,
+            self.auth.secret_key,
+            xml_body
         )
 
         resp = requests.put(url, headers=signed_headers, data=xml_body, verify=False)
@@ -627,34 +632,9 @@ class LifecycleRequest:
         return resp
 
     def create_rule_with_date(self, bucket: str, rule_id: str, prefix: str, date_str: str) -> requests.Response:
-        """
-        Crée et applique une règle expiration par date.
-        """
         rule = build_rule_with_date(rule_id, prefix, date_str)
         return self.apply_rules(bucket, [rule])
 
     def create_rule_with_days(self, bucket: str, rule_id: str, prefix: str, days: int) -> requests.Response:
-        """
-        Crée et applique une règle expiration par nombre de jours.
-        """
         rule = build_rule_with_days(rule_id, prefix, days)
         return self.apply_rules(bucket, [rule])
-
-    def delete_lifecycle(self, bucket: str) -> requests.Response:
-        """
-        Supprime la configuration lifecycle du bucket.
-        Path-style: https://<endpoint>/<bucket>?lifecycle
-        + Header x-emc-namespace.
-        """
-        endpoint = self.auth.endpoint.rstrip('/')
-        url = f"{endpoint}/{bucket}?lifecycle"
-
-        headers = {"x-emc-namespace": self.auth.namespace}
-        signed_headers = S3Signer.sign_request_v2(
-            "DELETE", url, headers.copy(),
-            self.auth.access_key, self.auth.secret_key, b""
-        )
-
-        resp = requests.delete(url, headers=signed_headers, verify=False)
-        resp.raise_for_status()
-        return resp
