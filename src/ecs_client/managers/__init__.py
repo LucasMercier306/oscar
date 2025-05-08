@@ -5,7 +5,6 @@ from ecs_client.managers.node_state import NodeStateManager
 from ecs_client.managers.power_supply import PowerSupplyManager
 from ecs_client.managers.replication_state import ReplicationStateManager
 from ecs_client.managers.temperature import TemperatureManager
-from ecs_client.managers.namespace_manager import NamespaceManager
 
 __all__ = [
     "ClusterStateManager",
@@ -15,5 +14,4 @@ __all__ = [
     "NetworkInterfaceManager",
     "PowerSupplyManager",
     "TemperatureManager",
-    "NamespaceManager"
 ]

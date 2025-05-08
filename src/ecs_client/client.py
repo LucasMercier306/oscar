@@ -1,10 +1,8 @@
-# src/ecs_client/client.py
-
 from code import interact
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple
 
-from ecs_client import logger, ConfigECSClient
+from ecs_client import ConfigECSClient, logger
 from ecs_client.managers import (
     ClusterStateManager,
     NetworkInterfaceManager,
@@ -12,17 +10,13 @@ from ecs_client.managers import (
     PowerSupplyManager,
     ReplicationStateManager,
     TemperatureManager,
-    NamespaceManager
 )
 from ecs_client.managers.base_manager import BaseManagerSSH
-from ecs_client.request import (
-    ECSRequest,
-    Authenticator as S3Client,
-    ECSClient as EMCClient,
-    NamespaceRequest,
-    BucketRequest,
-    LifecycleRequest
-)
+from ecs_client.managers.bucket_manager import BucketRequest
+from ecs_client.managers.lifecycle_manager import LifecycleRequest
+from ecs_client.managers.namespace_manager import NamespaceRequest
+from ecs_client.ssh_request import ECSRequest
+from requests import Response
 
 
 class ECSClient:
@@ -32,15 +26,14 @@ class ECSClient:
     - L’API Management EMC pour namespaces et buckets
     - Les opérations S3 (lifecycle, etc.)
     """
+
     def __init__(
         self,
         client_config: ConfigECSClient,
         ecs_requests: Dict[str, ECSRequest],
-        emc_client: EMCClient,
     ):
         self.client_config = client_config
         self.ecs_requests = ecs_requests
-        self.emc_client = emc_client
 
     # -------------- SSH / CLI interactif --------------
     def interactive(self):
@@ -112,12 +105,15 @@ class ECSClient:
     # -------------- Namespaces (EMC Management API) --------------
     def list_namespaces(self) -> List[Dict[str, str]]:
         logger.info("Listing namespaces...")
-        # Retourne directement la liste de dicts construite par NamespaceRequest.list
-        return NamespaceRequest(self.client_config.config_emc).list()
+        return NamespaceRequest(
+            self.client_config.config_emc
+        ).list()
 
     def get_namespace(self, name: str) -> Dict:
         logger.info(f"Getting namespace {name}...")
-        resp = NamespaceRequest(self.client_config.config_emc).get(name)
+        resp = NamespaceRequest(
+            self.client_config.config_emc
+        ).get(name)
         resp.raise_for_status()
         return resp.json()
 
@@ -127,35 +123,41 @@ class ECSClient:
         default_replication_group: Optional[str] = None,
         namespace_admins: Optional[List[str]] = None,
         quota: Optional[Dict[str, int]] = None,
-        encryption: bool = False
+        encryption: bool = False,
     ) -> Dict:
         logger.info(f"Creating namespace {name}...")
-        resp = NamespaceRequest(self.client_config.config_emc).create(
+        resp = NamespaceRequest(
+            self.client_config.config_emc
+        ).create(
             namespace=name,
             default_replication_group=default_replication_group,
             namespace_admins=namespace_admins,
             quota=quota,
-            encryption=encryption
+            encryption=encryption,
         )
         resp.raise_for_status()
         return resp.json()
 
     def update_namespace(self, name: str, **kwargs) -> Dict:
         logger.info(f"Updating namespace {name} with {kwargs}...")
-        resp = NamespaceRequest(self.client_config.config_emc).update(name, **kwargs)
+        resp = NamespaceRequest(
+            self.client_config.config_emc
+        ).update(name, **kwargs)
         resp.raise_for_status()
         return resp.json()
-
-    # delete_namespace supprimée car non supportée
 
     # -------------- Buckets (EMC Management API) --------------
     def list_buckets(self, namespace: str) -> List[Dict]:
         logger.info(f"Listing buckets in namespace {namespace}...")
-        return BucketRequest(self.client_config.config_emc).list(namespace)
+        return BucketRequest(
+            self.client_config.config_emc
+        ).list(namespace)
 
     def get_bucket(self, bucket: str, namespace: str) -> Dict:
         logger.info(f"Getting bucket {bucket} in namespace {namespace}...")
-        resp = BucketRequest(self.client_config.config_emc).get(bucket, namespace)
+        resp = BucketRequest(
+            self.client_config.config_emc
+        ).get(bucket, namespace)
         resp.raise_for_status()
         return resp.json()
 
@@ -165,47 +167,99 @@ class ECSClient:
         namespace: str,
         file_system_enabled: bool = False,
         quota: Optional[int] = None,
-        retention: Optional[int] = None
+        retention: Optional[int] = None,
+        immutable: bool = False,
     ) -> Dict:
-        logger.info(f"Creating bucket {bucket} in namespace {namespace}...")
-        resp = BucketRequest(self.client_config.config_emc).create(
+        """
+        Create a bucket; if immutable=True, retention (in days) is required.
+        """
+        logger.info(
+            f"Creating bucket {bucket} in namespace {namespace}... "
+            f"immutable={immutable}, retention_days={retention}"
+        )
+        resp = BucketRequest(
+            self.client_config.config_emc
+        ).create(
             bucket=bucket,
             namespace=namespace,
             file_system_enabled=file_system_enabled,
             quota=quota,
-            retention=retention
+            retention_days=retention,
+            immutable=immutable,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def update_bucket(self, bucket: str, **kwargs) -> Dict:
-        logger.info(f"Updating bucket {bucket} with {kwargs}...")
-        resp = BucketRequest(self.client_config.config_emc).update(bucket, **kwargs)
+    def update_bucket_owner(
+        self, bucket: str, namespace: str, new_owner: str
+    ) -> Dict:
+        """
+        Set or update the owner of a bucket.
+        """
+        logger.info(
+            f"Updating owner of bucket {bucket} to {new_owner}..."
+        )
+        resp = BucketRequest(
+            self.client_config.config_emc
+        ).set_owner(bucket, namespace, new_owner)
         resp.raise_for_status()
         return resp.json()
+
+    def get_bucket_metadata(
+        self, bucket: str, namespace: str
+    ) -> Dict[str, str]:
+        """
+        Retrieve all metadata of the specified bucket.
+        """
+        logger.info(
+            f"Retrieving metadata for bucket {bucket}..."
+        )
+        return BucketRequest(
+            self.client_config.config_emc
+        ).get_bucket_metadata(bucket, namespace)
+
+    def calculate_bucket_size(
+        self,
+        bucket: str,
+        namespace: str,
+        metadata_filter: Optional[Dict[str, str]] = None,
+    ) -> int:
+        """
+        Compute total size (in bytes) of objects in a bucket.
+        Optionally filter by object metadata.
+        """
+        logger.info(
+            f"Calculating size for bucket {bucket}..."
+        )
+        return BucketRequest(
+            self.client_config.config_emc
+        ).calculate_size(bucket, namespace, metadata_filter)
+
+    def lock_object(
+        self,
+        bucket: str,
+        namespace: str,
+        object_key: str,
+        retention_days: int,
+    ) -> Response:
+        """
+        Lock an object to make it immutable for a retention period.
+        """
+        logger.info(
+            f"Locking object {object_key} in bucket {bucket} "
+            f"for {retention_days} days..."
+        )
+        return BucketRequest(
+            self.client_config.config_emc
+        ).lock_object(bucket, namespace, object_key, retention_days)
 
     def delete_bucket(self, bucket: str, namespace: str) -> bool:
         logger.info(f"Deleting bucket {bucket} in namespace {namespace}...")
-        resp = BucketRequest(self.client_config.config_emc).delete(bucket, namespace)
+        resp = BucketRequest(
+            self.client_config.config_emc
+        ).delete(bucket, namespace)
         resp.raise_for_status()
         return resp.status_code == 204
-
-    def set_bucket_metadata(
-        self,
-        bucket: str,
-        head_type: str,
-        metadata: List[Dict[str, str]]
-    ) -> Dict:
-        logger.info(f"Setting secure metadata on bucket {bucket}...")
-        resp = BucketRequest(self.client_config.config_emc).set_metadata(
-            bucket=bucket,
-            namespace=self.client_config.config_emc.namespace,
-            head_type=head_type,
-            metadata=metadata
-        )
-        resp.raise_for_status()
-        return resp.json()
-
 
     # -------------- Gestion des lifecycles S3 --------------
     def list_lifecycle_rules(self, bucket: str) -> List[str]:
@@ -214,26 +268,28 @@ class ECSClient:
         return LifecycleRequest(s3_cfg).list_rules(bucket)
 
     def create_lifecycle_rule_with_date(
-        self,
-        bucket: str,
-        rule_id: str,
-        prefix: str,
-        date_str: str
+        self, bucket: str, rule_id: str, prefix: str, date_str: str
     ) -> None:
-        logger.info(f"Creating lifecycle rule {rule_id} on {bucket} expiring at {date_str}...")
+        logger.info(
+            f"Creating lifecycle rule {rule_id} "
+            f"on {bucket} expiring at {date_str}..."
+        )
         s3_cfg = self.client_config.configs_s3[0]
-        LifecycleRequest(s3_cfg).create_rule_with_date(bucket, rule_id, prefix, date_str)
+        LifecycleRequest(s3_cfg).create_rule_with_date(
+            bucket, rule_id, prefix, date_str
+        )
 
     def create_lifecycle_rule_with_days(
-        self,
-        bucket: str,
-        rule_id: str,
-        prefix: str,
-        days: int
+        self, bucket: str, rule_id: str, prefix: str, days: int
     ) -> None:
-        logger.info(f"Creating lifecycle rule {rule_id} on {bucket} expiring after {days} days...")
+        logger.info(
+            f"Creating lifecycle rule {rule_id} "
+            f"on {bucket} expiring after {days} days..."
+        )
         s3_cfg = self.client_config.configs_s3[0]
-        LifecycleRequest(s3_cfg).create_rule_with_days(bucket, rule_id, prefix, days)
+        LifecycleRequest(s3_cfg).create_rule_with_days(
+            bucket, rule_id, prefix, days
+        )
 
     # -------------- Contexte de session --------------
     @staticmethod
@@ -243,10 +299,13 @@ class ECSClient:
         try:
             ecs_requests: Dict[str, ECSRequest] = {}
             for ecs_cfg in client_config.configs_ecs:
-                jump = ecs_requests.get(ecs_cfg.ssh_jump_host) if ecs_cfg.ssh_jump_host else None
+                jump = (
+                    ecs_requests.get(ecs_cfg.ssh_jump_host)
+                    if ecs_cfg.ssh_jump_host
+                    else None
+                )
                 ecs_requests[ecs_cfg.name] = ECSRequest(ecs_cfg, jump)
-            emc_client = EMCClient(client_config.config_emc)
-            ecs_client = ECSClient(client_config, ecs_requests, emc_client)
+            ecs_client = ECSClient(client_config, ecs_requests)
             yield ecs_client
         finally:
             logger.info("ECS logout...")

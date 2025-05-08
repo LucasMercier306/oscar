@@ -2,9 +2,18 @@ import logging
 from dataclasses import dataclass
 from os import environ as env
 from typing import List, Optional
+
 import yaml
 
-__all__ = ["logger", "ConfigECSClient", "ConfigECS", "ConfigS3", "ConfigEMC", "load_config"]
+__all__ = [
+    "logger",
+    "ConfigECSClient",
+    "ConfigECS",
+    "ConfigS3",
+    "ConfigEMC",
+    "load_config",
+]
+
 
 # Logger setup
 def configure_logger(verbose: int) -> logging.Logger:
@@ -29,6 +38,7 @@ def configure_logger(verbose: int) -> logging.Logger:
 
     return logger
 
+
 @dataclass
 class ConfigS3:
     name: str
@@ -39,11 +49,13 @@ class ConfigS3:
     region: str
     prefix_list: List[str]
 
+
 @dataclass
 class ConfigEMC:
     username: str
     password: str
     endpoint: str
+
 
 @dataclass
 class ConfigECS:
@@ -59,6 +71,7 @@ class ConfigECS:
     api_port: str = "4443"
     verify: bool = True
 
+
 @dataclass
 class ConfigECSClient:
     configs_ecs: List[ConfigECS]
@@ -70,9 +83,14 @@ class ConfigECSClient:
         if self.verbose > 0:
             logger.setLevel(logging.DEBUG)
 
+
 def load_config() -> ConfigECSClient:
-    ecs_client_config_file_path = env.get("ECS_CONFIG_PATH", "./.config/ecs_client.yaml")
-    ecs_client_secrets_config_file_path = env.get("ECS_SECRETS_CONFIG_PATH", "./.config/ecs_client-secrets.yaml")
+    ecs_client_config_file_path = env.get(
+        "ECS_CONFIG_PATH", "./.config/ecs_client.yaml"
+    )
+    ecs_client_secrets_config_file_path = env.get(
+        "ECS_SECRETS_CONFIG_PATH", "./.config/ecs_client-secrets.yaml"
+    )
 
     try:
         with open(ecs_client_config_file_path, "r") as yamlfile:
@@ -92,7 +110,9 @@ def load_config() -> ConfigECSClient:
         ConfigECS(
             name=ecs_name,
             username=ecs_config["username"],
-            password=config_client_secrets.get("ecs", {}).get(ecs_name, {}).get("password", ""),
+            password=config_client_secrets.get("ecs", {})
+            .get(ecs_name, {})
+            .get("password", ""),
             host_name=ecs_config["host_name"],
         )
         for ecs_name, ecs_config in config_client.get("ecs", {}).items()
@@ -103,7 +123,9 @@ def load_config() -> ConfigECSClient:
             name=s3_name,
             endpoint=s3_config["endpoint"],
             access_key=s3_config["access_key"],
-            secret_key=config_client_secrets.get("s3", {}).get(s3_name, {}).get("secret_key", ""),
+            secret_key=config_client_secrets.get("s3", {})
+            .get(s3_name, {})
+            .get("secret_key", ""),
             namespace=s3_config["namespace"],
             region=s3_config["region"],
             prefix_list=s3_config.get("prefix_list", []),
@@ -128,6 +150,7 @@ def load_config() -> ConfigECSClient:
     configure_logger(config_ecs_client.verbose)
 
     return config_ecs_client
+
 
 # Initialize logger
 logger = configure_logger(verbose=0)

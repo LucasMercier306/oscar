@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from typing import Dict, List, Tuple
 
 from ecs_client import logger
-from ecs_client.request import ECSRequest
+from ecs_client.ssh_request import ECSRequest
 
 
 class BaseManagerSSH:
